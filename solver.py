@@ -34,9 +34,20 @@ class QBFSolver(object):
         self.sizes = sizes
         _, self.iclauses = parse_dimacs(filename)
         self.temp_filename = self.get_temp_filename(filename)
+
+        # set up the SAT solver for counters
         self.omega = minisolvers.MinisatSolver()
+        # add all forall vars
         for _ in range(sizes[0]):
             self.omega.new_var()
+        # add all clause vars (Cz) and the clauses to constraint that (Cz == false of clause c)
+        self.Cz_list = []
+        for c in self.iclauses:
+            self.omega.new_var()
+            Cz = self.omega.nvars()
+            self.Cz_list.append(Cz)
+            for Cc in c[:specs[0]]:
+                self.omega.add_clause([-Cz, -Cc])
 
     def get_temp_filename(self, filename): 
         paths = filename.split('/') 
@@ -56,27 +67,11 @@ class QBFSolver(object):
             if not has_counter:
                 return 'has candidate', candidate
 
-            # refine abstraction (TODO: optimize by checking if Cs has repeated clauses in the past)
             self.refine_abs(counter)
 
     def refine_abs(self, counter):
-        Cs = self.simplify(counter)
-        for _ in range(len(Cs)):
-            self.omega.new_var()
-        Zc = list(range(self.omega.nvars()-len(Cs)+1, self.omega.nvars()+1))
-        for (Z, C) in zip(Zc, Cs):
-            for Cc in C:
-                self.omega.add_clause([-Z, -Cc])
-        self.omega.add_clause(Zc)
-
-    def simplify(self, counter):
-        sat = []
-        for c in self.iclauses:
-            if self.trued_by_exists(c, counter):
-                continue
-            else:
-                sat.append(c[:self.specs[0]])
-        return sat
+        Zc = [Cz for (c, Cz) in zip(self.iclauses, self.Cz_list) if not self.trued_by_exists(c, counter)]
+        self.omega.add_clause(Zc)        
 
     def run_new_sat(self, iclauses):
         S = minisolvers.MinisatSolver()
@@ -137,7 +132,7 @@ class QBFSolver(object):
         # TODO: how to get models from sharpSAT??
 
 if __name__ == '__main__':
-    dimacs_dir = '/homes/wang603/QBF/train10_sat/'
+    dimacs_dir = '/homes/wang603/QBF/train10_unsat/'
     filenames = sorted(os.listdir(dimacs_dir))
     filenames = [os.path.join(dimacs_dir, filename) for filename in filenames]
     for fn in filenames:
