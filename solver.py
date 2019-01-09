@@ -3,6 +3,20 @@ sys.path.insert(0, '/homes/wang603/')
 from PyMiniSolvers import minisolvers
 import os
 
+import math
+import numpy as np
+import random
+import datetime
+import subprocess
+import pickle
+import sys
+import argparse
+from options import add_neurosat_options
+from neurosat import NeuroSAT
+from neurosat0 import NeuroSAT0
+
+from dimacs_to_data import one_problem
+
 def parse_dimacs(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
@@ -34,8 +48,9 @@ class QBFSolver(object):
         self.sizes = sizes
         _, self.iclauses = parse_dimacs(filename)
         self.temp_filename = self.get_temp_filename(filename)
+        self.steps = 0
 
-        # set up the SAT solver for counters
+        # set up the SAT solver for counter examples
         self.omega = minisolvers.MinisatSolver()
         # add all forall vars
         for _ in range(sizes[0]):
@@ -57,8 +72,18 @@ class QBFSolver(object):
         if not os.path.exists(temp_path): 
             os.makedirs(temp_path) 
 
-    def solve(self):
+    def solveRecStart(self, start):
+        has_counter, counter = self.check_candidate(list(start))
+        if not has_counter:
+            self.steps = 1
+            return 'has candidate', list(start)
+        self.refine_abs(counter)
+        return self.solve(start_step=1)
+
+    def solve(self, start_step=0):
+        self.steps = start_step
         while True:
+            self.steps += 1
             if not self.omega.solve():
                 return 'no candidate', None
             candidate = list(self.omega.get_model(end=self.sizes[0]))
@@ -72,17 +97,6 @@ class QBFSolver(object):
     def refine_abs(self, counter):
         Zc = [Cz for (c, Cz) in zip(self.iclauses, self.Cz_list) if not self.trued_by_exists(c, counter)]
         self.omega.add_clause(Zc)        
-
-    def run_new_sat(self, iclauses):
-        S = minisolvers.MinisatSolver()
-        for _ in range(self.sizes[0] + self.sizes[1]):
-            S.new_var()
-        for c in iclauses:
-            S.add_clause(c)
-        if S.solve():
-            return True, list(S.get_model())
-        else:
-            return False, None
 
     def check_candidate(self, candidate):
         assert (len(candidate) == self.sizes[0]), 'candidate should have all forall vars'
@@ -100,7 +114,18 @@ class QBFSolver(object):
             # run sharpSAT and collect result
             n_sat, models = self.run_sharp_SAT(fn)
             return 'TO HERE'
-    
+
+    def run_new_sat(self, iclauses):
+        S = minisolvers.MinisatSolver()
+        for _ in range(self.sizes[0] + self.sizes[1]):
+            S.new_var()
+        for c in iclauses:
+            S.add_clause(c)
+        if S.solve():
+            return True, list(S.get_model())
+        else:
+            return False, None
+   
     def trued_by_exists(self, c, t):
         return any([t[abs(c[i])-1] == int(c[i]>0) for i in range(self.specs[0], self.specs[0]+self.specs[1])])
 
@@ -132,10 +157,41 @@ class QBFSolver(object):
         # TODO: how to get models from sharpSAT??
 
 if __name__ == '__main__':
-    dimacs_dir = '/homes/wang603/QBF/train10_unsat/'
-    filenames = sorted(os.listdir(dimacs_dir))
-    filenames = [os.path.join(dimacs_dir, filename) for filename in filenames]
+
+    parser = argparse.ArgumentParser()
+    add_neurosat_options(parser)
+
+    parser.add_argument('--dimacs_dir', action='store', dest='dimacs_dir', type=str, help='directory of dimacs files')
+    parser.add_argument('--restore_id', action='store', dest='restore_id', type=int, default=None)
+    parser.add_argument('--restore_epoch', action='store', dest='restore_epoch', type=int, default=None)
+    parser.add_argument('--model_id', action='store', dest='model_id', type=int, default=0)
+    parser.add_argument('--n_quantifiers', action='store', dest='n_quantifiers', type=int, help='<Required> provide the number of quantifier', required=True)
+    parser.add_argument('-a', action='append', dest='specification', type=int, help='<Required> provide the specs of random QBF', required=True)
+
+    opts = parser.parse_args()
+    specs = opts.specification[:opts.n_quantifiers]
+    sizes = opts.specification[opts.n_quantifiers:]
+
+    setattr(opts, 'run_id', None)
+    setattr(opts, 'n_saves_to_keep', 1)
+
+    print(opts)
+    if opts.model_id == 0:
+        g = NeuroSAT0(opts)
+    else:
+        g = NeuralSAT(opts)
+
+    # dimacs_dir = '/homes/wang603/QBF/test10_sat/'
+    filenames = sorted(os.listdir(opts.dimacs_dir))
+    filenames = [os.path.join(opts.dimacs_dir, filename) for filename in filenames]
+    results = []
     for fn in filenames:
         S = QBFSolver([2,3], [8,10], fn)
-        result = S.solve()
-        print('file {} result {}'.format(fn, result))
+        problem = one_problem(fn, specs, sizes)
+        witness = g.reference_one(problem)
+        # result = S.solve()
+        result = S.solveRecStart(tuple(witness))
+        results.append((fn, result, S.steps))
+        print('file {} result {} in steps {}'.format(fn, result, S.steps))
+    steps = [r[2] for r in results]
+    print('mean steps is {}'.format(sum(steps) / len(steps)))
