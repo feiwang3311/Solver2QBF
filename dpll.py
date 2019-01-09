@@ -11,9 +11,11 @@ class SharpSAT(object):
         self.iclauses = []
 
     def new_var(self):
-        self.nVar += 1
+        self.nVars += 1
+
     def nvars(self):
-        return self.nVar
+        return self.nVars
+
     def add_clause(self, clause):
         self.iclauses.append(Clause(clause))
 
@@ -43,7 +45,7 @@ class SharpSAT(object):
         f, asn, cont = s
         if f.isEmpty():
             self.models.append(asn)
-            if len(cont) == 0: return None
+            if len(cont) == 0 or len(self.models) > 3: return None
             return self.drive(self.apply_backtrack(s))
         elif len(cont) == 0 and f.hasUnsat(): return None
         else: return self.drive(self.dpll_step(s))
@@ -57,7 +59,8 @@ class SharpSAT(object):
             self.drive(self.inject(f))
         else:
             nVars = self.nVars
-            self.drive(self.inject(Formula(self.iclauses)))
+            ff = Formula(self.iclauses)
+            self.drive(self.inject(ff))
         # process self.models
         nums = [2**(nVars-len(m)) for m in self.models]
         return sum(nums) > 0

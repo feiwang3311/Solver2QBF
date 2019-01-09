@@ -14,8 +14,8 @@ import argparse
 from options import add_neurosat_options
 from neurosat import NeuroSAT
 from neurosat0 import NeuroSAT0
-
 from dimacs_to_data import one_problem
+from dpll import SharpSAT
 
 def parse_dimacs(filename):
     with open(filename, 'r') as f:
@@ -52,6 +52,7 @@ class QBFSolver(object):
 
         # set up the SAT solver for counter examples
         self.omega = minisolvers.MinisatSolver()
+        # self.omega = SharpSAT()
         # add all forall vars
         for _ in range(sizes[0]):
             self.omega.new_var()
@@ -87,7 +88,7 @@ class QBFSolver(object):
             if not self.omega.solve():
                 return 'no candidate', None
             candidate = list(self.omega.get_model(end=self.sizes[0]))
-            
+
             has_counter, counter = self.check_candidate(candidate)
             if not has_counter:
                 return 'has candidate', candidate
@@ -157,7 +158,8 @@ class QBFSolver(object):
         # TODO: how to get models from sharpSAT??
 
 if __name__ == '__main__':
-
+    sys.setrecursionlimit(100000)
+    
     parser = argparse.ArgumentParser()
     add_neurosat_options(parser)
 
@@ -174,24 +176,30 @@ if __name__ == '__main__':
 
     setattr(opts, 'run_id', None)
     setattr(opts, 'n_saves_to_keep', 1)
-
     print(opts)
-    if opts.model_id == 0:
-        g = NeuroSAT0(opts)
-    else:
-        g = NeuralSAT(opts)
 
     # dimacs_dir = '/homes/wang603/QBF/test10_sat/'
     filenames = sorted(os.listdir(opts.dimacs_dir))
     filenames = [os.path.join(opts.dimacs_dir, filename) for filename in filenames]
     results = []
+
+    if opts.restore_id is None or opts.restore_epoch is None:
+        g = None
+    elif opts.model_id == 0:
+        g = NeuroSAT0(opts)
+    else:
+        g = NeuralSAT(opts)
+
     for fn in filenames:
         S = QBFSolver([2,3], [8,10], fn)
-        problem = one_problem(fn, specs, sizes)
-        witness = g.reference_one(problem)
-        # result = S.solve()
-        result = S.solveRecStart(tuple(witness))
+        if opts.restore_id is None or opts.restore_epoch is None:
+            result = S.solve()
+        else:
+            problem = one_problem(fn, specs, sizes)
+            witness = g.reference_one(problem)
+            result = S.solveRecStart(tuple(witness))
         results.append((fn, result, S.steps))
         print('file {} result {} in steps {}'.format(fn, result, S.steps))
+        exit()
     steps = [r[2] for r in results]
     print('mean steps is {}'.format(sum(steps) / len(steps)))
